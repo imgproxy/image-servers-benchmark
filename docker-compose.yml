@@ -1,0 +1,85 @@
+version: "3"
+
+services:
+  nginx:
+    container_name: nginx_benchmark
+    image: nginx:latest
+    restart: unless-stopped
+    tty: true
+    ports:
+      - 9001:80
+    volumes:
+      - ${PWD}/dataset:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost/list.txt || exit 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+
+  k6:
+    image: grafana/k6:latest
+    container_name: k6
+    volumes:
+      - ${PWD}:/bench:ro
+    working_dir: /bench
+
+  imgproxy:
+    container_name: imgproxy_benchmark
+    image: darthsim/imgproxy:latest
+    restart: unless-stopped
+    tty: true
+    ports:
+      - 9002:80
+    environment:
+      IMGPROXY_BIND: ":80"
+      IMGPROXY_MAX_SRC_RESOLUTION: 99
+      IMGPROXY_JPEG_PROGRESSIVE: 1
+      IMGPROXY_AVIF_SPEED: 9
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "imgproxy health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+
+  thumbor:
+    container_name: thumbor_benchmark
+    build: ${PWD}/thumbor
+    restart: unless-stopped
+    tty: true
+    ports:
+      - 9003:80
+    volumes:
+      - ${PWD}/thumbor:/thumbor:ro
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost:80/healthcheck || exit 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+
+  imagor:
+    container_name: imagor_benchmark
+    image: ghcr.io/cshum/imagor:latest
+    restart: unless-stopped
+    tty: true
+    command: [-server-access-log]
+    ports:
+      - 9004:80
+    environment:
+      PORT: 80
+      IMAGOR_UNSAFE: 1
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      # imagor image doesn't contain curl
+      test: ["CMD-SHELL", "timeout 5s bash -c ':> /dev/tcp/127.0.0.1/80' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+

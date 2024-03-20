@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 instance for imgproxy benchmark
+
+Parameters:
+  Architecture:
+    Description: EC2 instance CPU atchitecture to use
+    Type: String
+    Default: 'amd64'
+    AllowedValues:
+      - 'amd64'
+      - 'arm64'
+
+  KeyPairName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: The name of an existing Amazon EC2 key pair in this region to use to SSH into the Amazon EC2 instances.
+
+Mappings:
+  InstanceProps:
+    amd64:
+      Type: 'c7i.large'
+    arm64:
+      Type: 'c7g.large'
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !FindInMap ['InstanceProps', !Ref Architecture, 'Type']
+      ImageId: !Sub '{{resolve:ssm:/aws/service/canonical/ubuntu/server/lunar/stable/current/${Architecture}/hvm/ebs-gp2/ami-id}}'
+      KeyName: !Ref KeyPairName
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+
+          set -e
+
+          sudo apt update
+
+          sudo apt install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            gnupg \
+            git \
+            make \
+            unzip \
+            libvips-tools \
+            python3-pip
+
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+          echo \
+          "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+          "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+          sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+          sudo apt update
+          sudo apt install -y --no-install-recommends \
+            docker-ce \
+            docker-ce-cli \
+            containerd.io \
+            docker-buildx-plugin \
+            docker-compose-plugin
+
+          sudo usermod -aG docker ubuntu
+
+          cd /home/ubuntu
+          git clone --depth 1 https://github.com/imgproxy/image-servers-benchmark.git benchmark
+          cd benchmark
+          make prepare-dataset
+          sudo chown -R ubuntu /home/ubuntu/benchmark
+
+          # Signal CloudFormation that we're ready
+          sudo pip install --break-system-packages https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+          sudo /usr/local/bin/cfn-signal -s true --stack ${AWS::StackId} --resource EC2Instance --region ${AWS::Region}
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: "PT15M"
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub security-group-${AWS::StackName}
+      GroupDescription: "Allow HTTP/HTTPS and SSH inbound and outbound traffic"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 9000
+          ToPort: 9100
+          CidrIp: 0.0.0.0/0
+
+Outputs:
+  PublicIP:
+    Description: Public IP address of EC2 instance
+    Value: !GetAtt [EC2Instance, PublicIp]
