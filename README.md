@@ -7,7 +7,7 @@ This repository contains the code used to benchmark the performance of different
 * imagor
 
 > [!NOTE]
-> If you aren't interested in running the benchmarks yourself, you can find the raw k6 outputs in the [results](results) directory.
+> If you aren't interested in running the benchmarks yourself, you can read our [blog article](https://imgproxy.net/blog/image-processing-servers-benchmark/). Also, you can find the raw k6 outputs in the [results](results) directory.
 
 ## Running the benchmarks
 
